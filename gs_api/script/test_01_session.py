@@ -21,7 +21,7 @@ import pytest
 from gs_api.base import assertions
 from gs_api.page import SessionPage
 
-pytestmark = [pytest.mark.session, pytest.mark.smoke]
+pytestmark = [pytest.mark.api, pytest.mark.session, pytest.mark.smoke]
 
 
 @allure.epic("高升AI接口自动化测试")

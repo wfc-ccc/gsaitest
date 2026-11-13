@@ -1,15 +1,11 @@
 """
 日志工具。
 
-统一配置测试框架日志格式，同时输出到控制台与文件，
-并提供 Allure 附件日志接口。
+统一配置测试框架日志格式，同时输出到控制台与文件。
 """
 
 import logging
 import sys
-from pathlib import Path
-
-import allure
 
 from .config import REPORT_DIR
 
@@ -46,12 +42,3 @@ def get_logger(name: str = "gs_api") -> logging.Logger:
     logger.propagate = False
     _LOGGER_INITIALIZED = True
     return logger
-
-
-def attach_log_to_allure(message: str, name: str = "日志消息") -> None:
-    """将关键日志同时挂载到 Allure 报告。"""
-    allure.attach(
-        message,
-        name=name,
-        attachment_type=allure.attachment_type.TEXT,
-    )

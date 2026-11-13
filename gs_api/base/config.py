@@ -25,6 +25,10 @@ DEFAULT_CONFIG = {
         "timeout": 30,
         "retries": 3,
         "retry_delay": 1,
+        # 流式请求：首包前失败的重试次数 / 重试间隔基数(秒) / 首包延迟阈值(ms)
+        "stream_retries": 2,
+        "stream_retry_delay": 0.5,
+        "ttft_threshold_ms": 3000,
     },
     "auth": {
         "token": "",

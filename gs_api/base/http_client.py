@@ -7,12 +7,25 @@ HTTP 请求客户端封装。
 
 import json
 import time
+from dataclasses import dataclass
 from typing import Any, Generator, Optional
 
 import requests
 import allure
 
 from .config import config
+from .deserializer import flexible_text
+from .logger import get_logger
+
+log = get_logger(__name__)
+
+
+def _attach_allure_text(content: str, name: str) -> None:
+    """挂载文本附件到 Allure（无报告上下文时静默忽略）。"""
+    try:
+        allure.attach(content, name=name, attachment_type=allure.attachment_type.TEXT)
+    except Exception:
+        pass
 
 
 def _default_headers(token: Optional[str] = None) -> dict:
@@ -98,6 +111,36 @@ class StreamEvent:
         return self.event_type == self.EVENT_PARAM
 
 
+@dataclass
+class StreamMetrics:
+    """流式请求关键指标。
+
+    用于首包延迟（TTFT）、断网重试次数等异常场景的量化断言。
+    """
+
+    ttft_ms: Optional[float] = None          # 首包延迟: 请求发出 -> 首个 1001 数据事件
+    first_chunk_ms: Optional[float] = None   # 首个网络分片延迟
+    total_ms: Optional[float] = None         # 整条流总耗时
+    event_count: int = 0                     # 累计收到的事件数
+    attempts: int = 1                        # 实际请求次数（含重试）
+
+    @property
+    def retried(self) -> bool:
+        """是否发生过重试。"""
+        return self.attempts > 1
+
+    def summary(self) -> str:
+        """指标单行摘要，便于日志与 Allure 展示。"""
+        def _fmt(value: Optional[float]) -> str:
+            return "N/A" if value is None else f"{value:.1f}ms"
+
+        return (
+            f"请求次数={self.attempts} 事件数={self.event_count} "
+            f"首分片={_fmt(self.first_chunk_ms)} "
+            f"TTFT={_fmt(self.ttft_ms)} 总耗时={_fmt(self.total_ms)}"
+        )
+
+
 class HttpClient:
     """高升AI接口 HTTP 客户端。"""
 
@@ -106,6 +149,8 @@ class HttpClient:
         self.timeout = timeout or config.timeout
         self.retries = config.get("api.retries", 3)
         self.retry_delay = config.get("api.retry_delay", 1)
+        # 最近一次流式请求的指标（TTFT / 重试次数 / 总耗时）
+        self.last_stream_metrics: Optional[StreamMetrics] = None
         self._session = requests.Session()
 
     def _url(self, path: str) -> str:
@@ -212,26 +257,80 @@ class HttpClient:
         json_body: Any = None,
         **kwargs,
     ) -> Generator[StreamEvent, None, None]:
-        """发送流式 POST 请求，逐行解析 SSE 事件。"""
+        """发送流式 POST 请求，逐行解析 SSE 事件。
+
+        增量能力：
+        - 首包延迟 TTFT：请求发出 -> 首个 EVENT_DATA(1001) 数据事件，单位毫秒，
+          结果记录在 ``self.last_stream_metrics`` 并挂载到 Allure；
+        - 超时/断网重试：捕获 Timeout / ConnectionError，重试次数可配
+          （``stream_retries`` 或 config ``api.stream_retries``），失败时打印 WARNING。
+          仅当「尚未产出任何事件」时才重试，避免已推送内容被重复输出。
+        """
         url = self._url(path)
         merged_headers = _default_headers(kwargs.pop("token", None))
         extra_headers = kwargs.pop("headers", None)
         if extra_headers:
             merged_headers.update(extra_headers)
 
-        resp = self._session.post(
-            url,
-            json=json_body,
-            headers=merged_headers,
-            stream=True,
-            timeout=kwargs.get("timeout") or self.timeout,
-        )
-        resp.raise_for_status()
+        timeout = kwargs.get("timeout") or self.timeout
+        max_retries = kwargs.get("stream_retries")
+        if max_retries is None:
+            max_retries = config.get("api.stream_retries", 2)
+        retry_delay = kwargs.get("stream_retry_delay")
+        if retry_delay is None:
+            retry_delay = config.get("api.stream_retry_delay", 0.5)
 
+        metrics = StreamMetrics()
+        self.last_stream_metrics = metrics
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(1, max_retries + 2):
+            metrics.attempts = attempt
+            start_ts = time.perf_counter()
+            try:
+                with allure.step(f"流式 POST {path} (第{attempt}次)"):
+                    resp = self._session.post(
+                        url,
+                        json=json_body,
+                        headers=merged_headers,
+                        stream=True,
+                        timeout=timeout,
+                    )
+                    resp.raise_for_status()
+                    yield from self._iter_sse(resp, metrics, start_ts)
+                return
+            except (requests.Timeout, requests.ConnectionError) as e:
+                last_exc = e
+                if metrics.event_count > 0:
+                    # 已产出部分内容，重试会重复推送，直接抛出让上层感知
+                    raise
+                if attempt <= max_retries:
+                    wait = retry_delay * attempt
+                    log.warning(
+                        "流式请求失败(第%d/%d次) %s: %s，%.2fs 后重试",
+                        attempt, max_retries, type(e).__name__, e, wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("流式请求失败")
+
+    @staticmethod
+    def _iter_sse(
+        resp: Any,
+        metrics: StreamMetrics,
+        start_ts: float,
+    ) -> Generator[StreamEvent, None, None]:
+        """解析 SSE 数据行，同时记录首分片 / TTFT / 总耗时等指标。"""
         buffer = ""
         for chunk in resp.iter_content(chunk_size=None, decode_unicode=True):
             if not chunk:
                 continue
+            if metrics.first_chunk_ms is None:
+                metrics.first_chunk_ms = (time.perf_counter() - start_ts) * 1000
             buffer += chunk
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
@@ -243,8 +342,21 @@ class HttpClient:
                 except json.JSONDecodeError:
                     continue
                 et = str(obj.get("eventType", ""))
-                ed = str(obj.get("eventData", ""))
+                # 兜底解析：大模型可能把本该是字符串的分片内容返回成嵌套对象
+                ed = flexible_text(obj.get("eventData", ""))
+                metrics.event_count += 1
+                if metrics.ttft_ms is None and et == StreamEvent.EVENT_DATA:
+                    metrics.ttft_ms = (time.perf_counter() - start_ts) * 1000
+                    log.info("流式首包延迟 TTFT=%.1fms", metrics.ttft_ms)
+                    _attach_allure_text(
+                        f"TTFT={metrics.ttft_ms:.1f}ms\n{metrics.summary()}",
+                        name="首包延迟TTFT",
+                    )
                 yield StreamEvent(event_type=et, event_data=ed)
+
+        metrics.total_ms = (time.perf_counter() - start_ts) * 1000
+        log.info("流式请求完成: %s", metrics.summary())
+        _attach_allure_text(metrics.summary(), name="流式请求指标")
 
 
 http_client = HttpClient()

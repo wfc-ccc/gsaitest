@@ -27,7 +27,7 @@ from gs_api.page import ChatPage
 from gs_api.report import GaoShengRagasEvaluator, RagasEvalItem
 
 log = get_logger(__name__)
-pytestmark = [pytest.mark.ragas, pytest.mark.smoke]
+pytestmark = [pytest.mark.api, pytest.mark.ragas, pytest.mark.smoke]
 
 
 REQUIRED_KEYWORD = "高升"
@@ -296,3 +296,112 @@ class TestRagasQuality:
         df = ragas_evaluator.evaluate_items([item], scenario_name="多轮记忆-Ragas评估")
         # 多轮更困难，只记录不做强阈值断言
         log.info("多轮记忆评估结果:\n%s", df.head())
+
+    # ------------------------------------------------------------------
+    # 场景6：长文档切片/向量化效果 + ContextRecall（上下文召回率）
+    # ------------------------------------------------------------------
+
+    @allure.story("长文档检索与召回")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @allure.title("长文档切片向量化 + ContextRecall 上下文召回率达标")
+    @pytest.mark.ragas
+    @pytest.mark.slow
+    def test_long_document_retrieval_context_recall(
+        self,
+        chat_page: ChatPage,
+        ragas_evaluator: GaoShengRagasEvaluator,
+        sample_docs_dir: Path,
+        tmp_path: Path,
+    ):
+        """针对「长文档」验证切片与向量化效果，并断言 ContextRecall 达标。
+
+        流程：
+        1. 把样例知识库文档拼接复制成一份长文档，模拟真实的长文档切片场景；
+        2. 构建向量索引，用 chunk 数量验证切片（split）与向量化是否生效；
+        3. 对长文档内的事实型问题做向量检索，校验召回上下文非空且命中关键词；
+        4. 用 Ragas 评估 ContextRecall（上下文召回率），断言其达到阈值；
+           评估明细（DataFrame -> CSV/HTML）由 evaluate_items 自动挂载到 Allure。
+        """
+        from src.rag_system import RAGSystem
+
+        # 1) 构造长文档：拼接样例知识库文档并复制多份，放大文档长度
+        merged = "\n\n".join(
+            p.read_text(encoding="utf-8")
+            for p in sorted(sample_docs_dir.glob("*.txt"))
+        )
+        long_text = (merged + "\n\n") * 3
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "long_document.txt").write_text(long_text, encoding="utf-8")
+        assertions.assert_len_greater(long_text, 5000, "长文档字符数")
+
+        # 2) 切片 + 向量化：以 chunk 数量验证效果
+        rag = RAGSystem(
+            persist_dir=str(tmp_path / "chroma_long_doc"),
+            chunk_size=500,
+            chunk_overlap=100,
+            top_k=4,
+            temperature=0.0,
+        )
+        chunk_count = rag.load_and_index(str(docs_dir))
+        with allure.step(
+            f"长文档切片：原文 {len(long_text)} 字符 -> {chunk_count} 个 chunk"
+        ):
+            assert chunk_count > 3, (
+                f"长文档切片/向量化效果异常：chunk 数过少({chunk_count})，"
+                f"请检查 split_documents 的 chunk_size / chunk_overlap 配置"
+            )
+
+        # 3) 长文档内的事实型问题（reference 取自文档原文的标准答案）
+        cases = [
+            {
+                "question": "Python 编程入门课的价格和课时分别是多少？",
+                "reference": "Python 编程入门课（PY-101）价格为 199 元，共 40 课时，适合零基础学员。",
+                "keywords": ["199", "40"],
+            },
+            {
+                "question": "远程办公每周至少需要到岗几天？哪几天是强制到岗日？",
+                "reference": "每周至少到岗 2 天，其中周二和周四为强制到岗日。",
+                "keywords": ["周二", "周四"],
+            },
+            {
+                "question": "企业团报可以享受什么优惠？",
+                "reference": "企业团报（3 人及以上）可享 7 折优惠。",
+                "keywords": ["团报"],
+            },
+        ]
+
+        items: list[RagasEvalItem] = []
+        for c in cases:
+            docs = rag._retrieve_documents(c["question"])
+            ctx = [d.page_content for d in docs]
+            with allure.step(f"长文档向量检索：{c['question']}"):
+                assertions.assert_list_not_empty(ctx, "长文档检索上下文")
+
+            joined = "\n".join(ctx)
+            with allure.step(f"召回上下文命中关键词 {c['keywords']}"):
+                assert any(k in joined for k in c["keywords"]), (
+                    f"长文档检索未命中预期关键词 {c['keywords']}，"
+                    f"召回内容片段: {joined[:300]}"
+                )
+
+            answer = chat_page.chat_text_get_answer(c["question"])
+            self._assert_brand(answer, c["question"])
+            items.append(RagasEvalItem(
+                question=c["question"],
+                response=answer,
+                retrieved_contexts=ctx,
+                reference=c["reference"],
+                type="long_document",
+            ))
+
+        # 4) Ragas 评估 + ContextRecall 达标断言
+        df = ragas_evaluator.evaluate_items(items, scenario_name="长文档检索-Ragas评估")
+        with allure.step("断言 ContextRecall（上下文召回率）达标"):
+            ragas_evaluator.assert_thresholds(
+                df,
+                thresholds={
+                    "context_recall": config.get("ragas.threshold.context_recall", 0.6)
+                },
+                scenario_name="长文档检索",
+            )

@@ -1,9 +1,5 @@
 # 高升（GaoSheng）AI 接口自动化测试框架
 
-> 版本：v1.0.0 · 接口文档：v1.0.0  
-> Base URL：`http://127.0.0.1:10010`  
-> 品牌说明：原「天机AI」已统一替换为「高升AI」
-
 ---
 
 ## 一、项目简介
@@ -13,7 +9,7 @@
 ```
 gs_api/
 ├── base/      # 公共基础层：配置、HTTP 客户端、Selenium 基类、日志、断言、数据加载
-├── page/      # 接口 / UI 操作层：会话、聊天、历史会话、知识库、语音、Web UI
+├── page/      # 接口 / UI 操作层：会话、聊天、历史会话、知识库、Web UI
 ├── script/    # pytest 测试脚本层：7 套测试脚本 + conftest 共享 fixtures
 └── report/    # 报告层：Allure 报告管理 + Ragas AI 回答质量评估
 ```
@@ -24,8 +20,10 @@ gs_api/
 |---|---|
 | **四层架构** | base → page → script → report 清晰分层，便于维护与扩展 |
 | **数据驱动** | 采用 **YAML + CSV** 双格式管理测试数据，符合用户数据驱动偏好 |
+| **流式健壮性** | 流式接口量化 **首包延迟 TTFT**，并在 **超时 / 断网** 场景自动重试（次数可配），覆盖数据分片完整性 |
+| **AI 容错** | 大模型输出不稳定时，**嵌套对象等畸形报文** 经宽容解析（`flexible_text`）拍平为字符串，保证断言可用、前端渲染不崩溃 |
 | **AI 质量评估** | 深度集成项目原有的 **Ragas** 框架，对高升AI回答做 Faithfulness / AnswerRelevancy / ContextRecall 多维度评估 |
-| **品牌一致性** | 所有用例断言「高升」品牌词，并禁止返回中出现「天机」旧品牌词 |
+| **品牌一致性** | 所有用例统一断言「高升」品牌词 |
 | **Allure 报告** | 自动生成环境信息、缺陷分类、Ragas 评估明细、截图等富媒体附件 |
 | **Selenium 辅助** | base 层提供完整的 Selenium 公共方法，支撑后续 Web UI 冒烟测试 |
 
@@ -34,23 +32,24 @@ gs_api/
 ## 二、目录结构
 
 ```
-test-ragas/
+gstest/
 ├── gs_api/                              # ★ 高升AI测试框架根目录
 │   ├── __init__.py                      #   框架元信息 + 各层统一导出
 │   ├── base/                            #   base 层：公共基础封装
 │   │   ├── config.py                    #     全局配置管理（默认值 → YAML → 环境变量）
 │   │   ├── http_client.py               #     HTTP 客户端 + 流式 SSE（1001/1002/1003）解析
+│   │   │                                #       └ StreamMetrics：TTFT 首包延迟 / 超时与断网重试
 │   │   ├── selenium_base.py             #     ★ Selenium 公共方法基类
 │   │   ├── logger.py                    #     统一日志（控制台 + 文件 + Allure 挂载）
 │   │   ├── assertions.py                #     通用断言集合 + Ragas 阈值断言
 │   │   ├── data_loader.py               #     ★ YAML / CSV 数据驱动加载器
+│   │   ├── deserializer.py              #     ★ 宽容文本反序列化（嵌套对象拍平，AI 输出兜底）
 │   │   └── __init__.py
 │   ├── page/                            #   page 层：接口与 UI 操作封装
 │   │   ├── session_page.py              #     会话接口（新建 / 热门问题）
 │   │   ├── chat_page.py                 #     聊天接口（流式 / 停止 / 文本 / 模版）
 │   │   ├── history_page.py              #     历史会话（详情 / 列表 / 更新标题 / 删除）
 │   │   ├── embedding_page.py            #     知识库向量（embedding CRUD / 搜索）
-│   │   ├── audio_page.py                #     语音接口（STT / TTS / TTS-Stream）
 │   │   ├── web_page.py                  #     ★ 高升AI Web UI 辅助操作
 │   │   └── __init__.py
 │   ├── report/                          #   report 层：报告 + AI 质量评估
@@ -60,17 +59,17 @@ test-ragas/
 │   ├── script/                          #   script 层：pytest 自动化脚本
 │   │   ├── conftest.py                  #     ★ 共享 fixtures + pytest 生命周期钩子
 │   │   ├── test_01_session.py           #     一、会话接口测试
-│   │   ├── test_02_chat.py              #     二、聊天接口测试（含流式+Ragas）
+│   │   ├── test_02_chat.py              #     二、聊天接口测试（流式 TTFT/重试 + 容错 + Ragas）
 │   │   ├── test_03_history.py           #     三、历史会话测试（CRUD 闭环）
 │   │   ├── test_04_embedding.py         #     四、知识库向量接口测试
-│   │   ├── test_05_audio.py             #     五、语音接口测试（STT/TTS/TTS-Stream）
-│   │   ├── test_06_ragas_quality.py     #     ★ 六、Ragas AI 质量评估套件（核心）
-│   │   ├── test_07_web_ui_smoke.py      #     七、Web UI 冒烟（默认跳过）
+│   │   ├── test_05_ragas_quality.py     #     ★ 五、Ragas AI 质量评估套件（含长文档检索 ContextRecall）
+│   │   ├── test_06_web_ui_smoke.py      #     六、Web UI 冒烟（显式等待，无 sleep，默认跳过）
+│   │   ├── test_07_mock_performance.py  #     ★ 七、Mock 大模型并发性能（TPS / 平均 TTFT / 限流 429）
 │   │   └── __init__.py
 │   ├── config/
 │   │   └── config.yaml                  # 全局配置文件（可被环境变量覆盖）
 │   └── data/
-│       ├── test_data.yaml               # ★ YAML 测试数据（课程咨询 / FAQ / 向量 / 语音）
+│       ├── test_data.yaml               # ★ YAML 测试数据（会话 / 课程咨询 / FAQ / 向量）
 │       └── qa_data.csv                  # ★ CSV 问答对（数据驱动 + Ragas 批量评估）
 │
 ├── src/                                 # 原有 RAG 系统（被 Ragas 复用为上下文检索）
@@ -78,11 +77,10 @@ test-ragas/
 │   ├── llm.py
 │   ├── embeddings.py
 │   └── vector_store.py
-├── tests/                               # 原有 RAG 单元测试（不影响 gs_api）
 ├── data/sample_docs/                    # 原有知识库文档（Ragas Context 使用）
-├── scenarios/                           # 原有场景文档
-├── pytest.ini                           # pytest markers / addopts 配置
-├── requirements.txt                     # 项目依赖（新增 allure-pytest / selenium / pyyaml 等）
+├── pytest.ini                           # pytest markers / addopts 配置（含 --clean-alluredir）
+├── requirements.txt                     # 项目依赖（新增 allure-pytest / selenium / pyyaml / pytest-xdist 等）
+├── Jenkinsfile                          # ★ Jenkins 声明式流水线（CI 闭环）
 ├── .env.example                         # 环境变量示例
 ├── run_gs_api_tests.ps1                 # Windows PowerShell 一键运行
 └── run_gs_api_tests.sh                  # macOS / Linux bash 一键运行
@@ -92,7 +90,7 @@ test-ragas/
 
 ## 三、接口覆盖清单
 
-对照 **aitj v1.0.0 接口文档**，18 个接口全覆盖：
+对照 **aitj v1.0.0 接口文档**，当前 gs_api 脚本层已覆盖 15 个接口：
 
 | 编号 | 模块 | 方法 · 路径 | 测试脚本 |
 |---|---|---|---|
@@ -120,7 +118,7 @@ test-ragas/
 
 ```bash
 # 1. 进入项目目录
-cd test-ragas
+cd gstest
 
 # 2. 推荐使用 Python 3.10+ 创建虚拟环境
 python -m venv .venv
@@ -130,7 +128,7 @@ python -m venv .venv
 #    或 macOS/Linux
 source .venv/bin/activate
 
-# 4. 安装依赖（新增 allure-pytest / selenium / pyyaml / pandas 等）
+# 4. 安装依赖（新增 allure-pytest / selenium / pyyaml / pandas / pytest-xdist 等）
 pip install -r requirements.txt
 ```
 
@@ -167,7 +165,7 @@ pip install -r requirements.txt
 # 冒烟用例（会话+聊天+历史+Ragas），默认生成 Allure 结果
 .\run_gs_api_tests.ps1
 
-# 全量用例（含语音 / 向量 / Web UI）
+# 全量用例（含向量 / Web UI）
 .\run_gs_api_tests.ps1 -All
 
 # 运行后自动用浏览器打开 Allure HTML
@@ -195,11 +193,23 @@ pytest gs_api/script -m smoke -v \
 # 仅跑会话接口
 pytest gs_api/script/test_01_session.py -v
 
+# 仅跑聊天接口（含流式 TTFT / 断网重试用例）
+pytest gs_api/script/test_02_chat.py -v
+
 # 仅跑 Ragas AI 质量评估（需要 DEEPSEEK_API_KEY）
-pytest gs_api/script/test_06_ragas_quality.py -v -s
+pytest gs_api/script/test_05_ragas_quality.py -v -s
 
 # 跑全量（不做任何过滤）
 pytest gs_api/script -v
+
+# 仅跑 Web UI 用例（无头模式，CI 默认）
+pytest gs_api/script -m ui --headless -v
+
+# 仅跑 Mock 并发性能 / 限流用例（离线、零 Token 成本）
+pytest gs_api/script -m performance -v -s
+
+# 冒烟用例并发加速（需 pytest-xdist）
+pytest gs_api/script -m smoke -n auto -v
 
 # 生成 Allure HTML 报告
 allure generate gs_api/report/output/allure_results \
@@ -209,18 +219,109 @@ allure generate gs_api/report/output/allure_results \
 allure open gs_api/report/output/allure_html
 ```
 
+> 自定义参数：`--headless` 强制无头运行、`--no-headless` 强制显示浏览器（本地调试）。
+
 ### 5.3 pytest markers 清单
 
 | marker | 说明 | 覆盖脚本 |
 |---|---|---|
-| `smoke` | 冒烟测试（核心必跑） | test_01 / test_02 / test_03 / test_06 |
+| `smoke` | 冒烟测试（核心必跑） | test_01 / test_02 / test_03 / test_05 |
+| `api` | 接口测试（HTTP / SSE，全部接口脚本） | test_01 ~ test_05 / test_07 |
+| `ui` | Web UI 测试（Selenium，CI 流水线使用） | test_06_web_ui_smoke.py |
 | `session` | 会话接口 | test_01_session.py |
 | `chat` | 聊天接口 | test_02_chat.py |
 | `history` | 历史会话接口 | test_03_history.py |
 | `embedding` | 知识库向量接口 | test_04_embedding.py |
-| `audio` | 语音接口 | test_05_audio.py |
-| `ragas` | **Ragas AI 回答质量评估** | test_02 / test_06_ragas_quality.py |
-| `webui` | Web UI 冒烟（默认跳过） | test_07_web_ui_smoke.py |
+| `ragas` | **Ragas AI 回答质量评估** | test_02 / test_05_ragas_quality.py |
+| `performance` | 并发性能与限流（Mock 大模型） | test_07_mock_performance.py |
+| `webui` | Web UI 冒烟（默认跳过） | test_06_web_ui_smoke.py |
+
+### 5.4 流式接口健壮性测试（首包延迟 + 超时重试）
+
+针对大模型流式响应的不确定性，`test_02_chat.py` 提供两条专项用例：
+
+| 用例 | 场景 | 断言要点 |
+|---|---|---|
+| `test_chat_stream_ttft_below_threshold` | 真实流式请求 | **首包延迟 TTFT < 3000ms**（阈值可配），同时校验事件非空、拼接回答非空 |
+| `test_chat_stream_retry_on_connection_error` | Mock 断网（`ConnectionError`） | 重试 2 次共 3 次请求、每次失败打印 WARNING、重试后仍采集到 TTFT、**跨分片拼接内容完整无丢失** |
+
+指标采集由 base 层的 `StreamMetrics` 统一完成，可通过 `ChatPage.last_stream_metrics` 读取：
+
+```python
+full_text, events = chat_page.chat_stream_full("解释什么是RAG", session_id)
+m = chat_page.last_stream_metrics
+print(m.ttft_ms, m.first_chunk_ms, m.total_ms, m.attempts, m.event_count)
+```
+
+相关配置（[gs_api/config/config.yaml](gs_api/config/config.yaml) → `api`）：
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `stream_retries` | `2` | 首包前（Timeout / 断网）的重试次数 |
+| `stream_retry_delay` | `0.5` | 重试间隔基数（秒），实际等待 = 基数 × 第 n 次 |
+| `ttft_threshold_ms` | `3000` | 首包延迟阈值（毫秒），用于用例断言 |
+
+> 说明：仅在「尚未产出任何事件」时触发重试；若流中已推送部分内容再中断，直接抛出异常，
+> 避免重复推送造成前端渲染重复。TTFT 与重试指标会自动挂载到 Allure 用例附件。
+
+### 5.5 AI 容错与边界测试（异常反序列化兜底）
+
+大模型输出不稳定，「本该是字符串」的 `content` / `eventData` 可能变成嵌套对象或数组。
+base 层提供宽容解析器 [gs_api/base/deserializer.py](gs_api/base/deserializer.py)：
+
+```python
+from gs_api.base import flexible_text
+
+flexible_text("纯文本")                                  # -> "纯文本"（幂等，正常报文零影响）
+flexible_text({"text": "高升", "meta": {"n": "AI"}})      # -> "高升AI"（嵌套对象递归拍平）
+flexible_text(["高升", {"n": "AI"}])                     # -> "高升AI"（数组按顺序拍平）
+flexible_text(None)                                      # -> ""
+```
+
+对流式分片与文本聊天回答均走该兜底逻辑，对应两条用例（均在 `test_02_chat.py`）：
+
+| 用例 | 畸形 Mock 报文 | 断言要点 |
+|---|---|---|
+| `test_chat_text_tolerant_deserialization` | `data` = `{"text":"高升","meta":{"brand":{"name":"AI"}}}`（嵌套字典） | 拦截 `requests.Session.request` 注入报文；`code == 200`；拍平结果为 `str` 且等于 `高升AI`；无结构符号残留（前端不崩溃）；`chat_text_get_answer` 端到端返回纯字符串；字符串输入拍平幂等 |
+| `test_chat_stream_tolerant_deserialization` | 分片 `eventData` 为嵌套字典 | 分片全部拍平为 `str`，事件序列 `1001/1001/1002` 完整，拼接内容为 `高升AI流式` |
+
+> 拦截点说明：非流式请求统一走 `requests.Session.request`，流式请求走 `requests.Session.post`，
+> 因此 mock 分别 patch 这两个方法，直接以 `unittest.mock.patch` 在真实 HTTP 边界注入报文。
+
+### 5.6 流式 UI 自动化（弃用 time.sleep，改用显式等待）
+
+Web UI 用例全面弃用 `time.sleep`，改用 `WebDriverWait` + 自定义 `expected_conditions`
+（位于 [gs_api/base/selenium_base.py](gs_api/base/selenium_base.py)），从根本上消除「等待时长拍脑袋」带来的偶发失败：
+
+| 自定义条件 | 判定逻辑 |
+|---|---|
+| `AnswerRenderComplete` | 回答气泡文本非空，且「停止生成」按钮消失 **或**「复制」按钮出现 → 视为渲染完成，返回最终文本 |
+
+核心用例 `test_chat_bubble_render_complete`（`test_06_web_ui_smoke.py`）流程：
+
+```python
+web_page.ui_new_session()                       # 新建会话（内部为 wait_present，无 sleep）
+answer = web_page.ui_send_question(question)    # 发送后等待 AnswerRenderComplete
+answer = answer.strip()                         # 提取「最终的全部文本」再断言
+```
+
+断言要点：最终文本非空、Allure 挂载回答文本与失败截图。
+
+### 5.7 Mock 大模型并发性能测试（TPS / 平均 TTFT / 限流 429）
+
+`test_07_mock_performance.py` 用 `unittest.mock` 在 HTTP 边界拦截「第三方大模型」调用，
+直接返回瞬间响应的假 SSE 数据，使压测**可离线、可重复、零 Token 成本**；
+再用 `concurrent.futures.ThreadPoolExecutor` 模拟并发：
+
+| 用例 | 场景 | 断言要点 |
+|---|---|---|
+| `test_concurrent_stream_throughput` | 10 并发 / 40 请求，Mock 秒回 | 分片拼接完整、事件数一致；**TPS ≥ 20 req/s**；**平均 TTFT ≤ `api.ttft_threshold_ms`** |
+| `test_concurrent_rate_limit_429` | 上游网关并发在途上限 `limit=2`，30 并发 | **限流被触发**（`rejected > 0`）；客户端感知 429 次数 == 网关拒绝次数；成功数 == 总数 − 被限流数；异常含 `429` |
+
+指标（总耗时 / TPS / 平均与最大 TTFT）会以文本附件挂载到 Allure 报告。
+
+> 拦截点：并发流式请求走 `requests.Session.post`，故 patch 该方法；
+> 每个并发任务使用独立 `HttpClient` 实例，避免共享 Session 与 `last_stream_metrics` 竞争。
 
 ---
 
@@ -239,7 +340,7 @@ allure open gs_api/report/output/allure_html
 
 阈值可在 [gs_api/config/config.yaml](gs_api/config/config.yaml) → `ragas.threshold` 中调整。
 
-### 6.2 评估场景（test_06_ragas_quality.py）
+### 6.2 评估场景（test_05_ragas_quality.py）
 
 | 场景 | 说明 | 数据来源 |
 |---|---|---|
@@ -248,57 +349,51 @@ allure open gs_api/report/output/allure_html
 | **平台 FAQ** | 试听退款 / 结业证书 / 视频下载 | 内置 3 条 + RAG 上下文 |
 | **CSV 批量** | 最多 12 条 Q&A 对 | [gs_api/data/qa_data.csv](gs_api/data/qa_data.csv) |
 | **多轮记忆** | 第 2 轮用「这门课」指代 + 指代消解 | 流式会话串联 |
+| **长文档检索** | 长文档切片/向量化 + **ContextRecall 上下文召回率达标** | 样例文档拼接成长文档 → 临时向量库 |
 
 ### 6.3 上下文复用项目原有 RAG 系统
 
 为了让 Faithfulness 得分准确，Ragas 需要 retrieved_contexts。框架自动复用 `src.rag_system.RAGSystem` 的向量库：
 
 ```python
-# 伪代码示意（真实实现位于 test_06_ragas_quality.py）
+# 伪代码示意（真实实现位于 test_05_ragas_quality.py）
 from src.rag_system import RAGSystem
 rag = RAGSystem(...)
 rag.load_and_index("data/sample_docs/")
 contexts = rag._retrieve_documents(question)  # 作为 Ragas 的 retrieved_contexts
 ```
 
+**长文档检索用例**（`test_long_document_retrieval_context_recall`）额外验证「切片 + 向量化」效果：
+
+1. 把样例知识库文档拼接复制成长文档，写入临时目录（并用 `assert_len_greater` 校验字符数）；
+2. 构建向量索引，**以 chunk 数量断言 `split_documents` 切片生效**；
+3. 对长文档内的事实型问题做向量检索，断言召回上下文非空且命中关键词；
+4. 用 Ragas 计算 **ContextRecall** 并断言达标（阈值取自 `ragas.threshold.context_recall`）。
+
 ### 6.4 Allure 报告中的 Ragas 结果
 
-每个 Ragas 用例会自动挂载两份附件：
-- **Ragas评估明细-CSV / HTML**：每个问题的每个指标的得分表格
+每个 Ragas 用例（含长文档检索）都会自动挂载以下附件，由 `evaluate_items` → `AllureManager.attach_ragas_table` 完成：
+- **Ragas评估明细-CSV**：每个问题的每个指标的得分表格（DataFrame → CSV）
+- **Ragas评估明细-HTML**：同一 DataFrame 的 HTML 表格（便于在报告中直接查看）
 - **Ragas评估汇总**：每个指标的均值 + 样本数
 
 ---
 
-## 七、品牌词校验：天机 → 高升
+## 七、四层架构详解
 
-所有「天机」字样已在 **代码层、数据层、断言层** 三重替换/校验：
-
-| 位置 | 做法 |
-|---|---|
-| 代码注释 / docstring | 统一使用「高升AI」「高升学堂」 |
-| 测试数据 `qa_data.csv` / `test_data.yaml` | 所有 reference、contexts 均为「高升」 |
-| 会话接口断言 | 欢迎页 title + describe 必须包含「高升」，且 **禁止包含「天机」** |
-| 文本聊天断言 | 回答中禁止包含「天机」，否则 pytest.fail() |
-| Ragas 参考值 | 所有问题的 reference 均使用「高升」品牌名 |
-
-如果被测接口返回中仍包含「天机」字样，框架测试会**直接 fail**，提示及时修复。
-
----
-
-## 八、四层架构详解
-
-### 8.1 base 层：公共基础
+### 7.1 base 层：公共基础
 
 | 模块 | 关键方法 / 能力 |
 |---|---|
 | [config.py](gs_api/base/config.py) | `config.base_url` / `config.token` / `config.get("ragas.threshold.faithfulness")` 三层优先级 |
-| [http_client.py](gs_api/base/http_client.py) | `get / post / put / delete` + `post_stream()` 流式 SSE 逐行解析 → `StreamEvent(1001/1002/1003)` |
+| [http_client.py](gs_api/base/http_client.py) | `get / post / put / delete` + `post_stream()` 流式 SSE 逐行解析 → `StreamEvent(1001/1002/1003)`；`StreamMetrics` 量化 **TTFT 首包延迟** 并支持 **超时 / 断网重试**（`stream_retries` 可配，失败打印 WARNING） |
 | [selenium_base.py](gs_api/base/selenium_base.py) | 8 种定位方式 + `wait_visible / wait_clickable` + 截图 + iframe + Alert + JS 滚动 |
 | [assertions.py](gs_api/base/assertions.py) | `assert_api_success()` + 字段类型断言 + `assert_ragas_score()` |
 | [data_loader.py](gs_api/base/data_loader.py) | `load_yaml("test_data.yaml")` / `load_csv("qa_data.csv")` / `load_qa_pairs()` |
-| [logger.py](gs_api/base/logger.py) | INFO 级控制台 + DEBUG 级文件，同时支持 `attach_log_to_allure()` |
+| [deserializer.py](gs_api/base/deserializer.py) | `flexible_text()` 宽容拍平：把嵌套对象 / 数组 / 数字兜底为字符串（对应后端 `FlexibleTextDeserializer` 契约），供流式分片与文本回答做容错解析 |
+| [logger.py](gs_api/base/logger.py) | INFO 级控制台 + DEBUG 级文件输出 |
 
-### 8.2 page 层：接口封装（示例：聊天流式）
+### 7.2 page 层：接口封装（示例：聊天流式）
 
 ```python
 # 示例：聊天接口 page 使用
@@ -320,29 +415,35 @@ for ev in events:
         print(ev.event_data, end="")
     elif ev.is_stop:     # eventType == 1002
         print("\n[停止]")
+
+# ③ 读取流式指标（首包延迟 / 重试次数 / 总耗时）
+m = chat.last_stream_metrics
+if m.ttft_ms is not None and m.ttft_ms > 3000:
+    print(f"首包延迟告警: TTFT={m.ttft_ms:.0f}ms, 重试={m.attempts - 1} 次")
 ```
 
-### 8.3 script 层：conftest fixtures 一览
+### 7.3 script 层：conftest fixtures 一览
 
 在 [gs_api/script/conftest.py](gs_api/script/conftest.py) 中提供以下共享 fixtures：
 
 | fixture | scope | 说明 |
 |---|---|---|
 | `http_client` | session | 共享 `HttpClient` 实例（连接池） |
-| `session_page` / `chat_page` / `history_page` / `embedding_page` / `audio_page` | session | 5 大 Page 实例 |
+| `session_page` / `chat_page` / `history_page` / `embedding_page` | session | 4 大接口 Page 实例 |
 | `web_page` | function | 每个用例独立 Selenium 浏览器，自动 quit |
 | `shared_session_id` | module | 模块级共享会话 ID：模块开始新建一次会话，供所有接口串联 |
 | `evaluator_llm` / `evaluator_embeddings` | session | 复用项目原有的 DeepSeek LLM + 硅基流动 Embeddings（Ragas 评估） |
 | `ragas_evaluator` | session | 构造好的 `GaoShengRagasEvaluator` 实例 |
 | `gs_test_data` | session | `test_data.yaml` 顶层 dict |
 | `gs_qa_pairs` | session | `qa_data.csv` Q&A 对列表 |
+| `sample_docs_dir` | session | 预制知识库文档目录，供长文档切片 / 向量检索 / Ragas 上下文复用 |
 | `gao_sheng_expected_keyword` | function | 固定值 `"高升"`，用于断言 |
 
 生命周期钩子：
 - `pytest_configure`：启动时自动清空 Allure 结果、写入 `environment.properties` + `categories.json`
-- markers 注册：8 种接口 + 级别 marker
+- markers 注册：共 12 种（`smoke / api / ui / session / chat / history / embedding / ragas / performance / webui / slow / requires_llm`）
 
-### 8.4 report 层：Allure + Ragas 协同
+### 7.4 report 层：Allure + Ragas 协同
 
 ```
 pytest --alluredir → 生成 JSON/TXT/附件
@@ -356,9 +457,9 @@ allure generate → 生成 HTML 报告（可 allure open 打开）
 
 ---
 
-## 九、数据驱动（YAML + CSV）
+## 八、数据驱动（YAML + CSV）
 
-### 9.1 YAML：复杂结构数据
+### 8.1 YAML：复杂结构数据
 
 [gs_api/data/test_data.yaml](gs_api/data/test_data.yaml) 按模块组织：
 
@@ -382,7 +483,7 @@ embedding:
     - "高升Web前端开发实战..."
 ```
 
-### 9.2 CSV：扁平 Q&A 列表
+### 8.2 CSV：扁平 Q&A 列表
 
 [gs_api/data/qa_data.csv](gs_api/data/qa_data.csv) 格式：
 
@@ -395,16 +496,19 @@ question,contexts,reference,type
 
 ---
 
-## 十、常见问题
+## 九、常见问题
 
 **Q1：运行报错缺少 `DEEPSEEK_API_KEY`？**
 A：没有 Key 时，标记 `@requires_llm` 的用例会自动 skip。若只想跑接口功能（不含 Ragas），请用 `-m "smoke and not ragas"`。
 
 **Q2：流式聊天接口返回的每行 JSON 格式不同？**
-A：`http_client.post_stream()` 已做容错，解析失败的行会被跳过并继续，不会抛出异常。可通过返回的 `events` 列表查看所有解析到的事件。
+A：`http_client.post_stream()` 已做容错，解析失败的行会被跳过并继续，不会抛出异常。可通过返回的 `events` 列表查看所有解析到的事件。跨网络分片的 JSON 会被自动拼接后再解析，保证数据分片完整性。
 
-**Q3：STT（语音转文字）用例总是被跳过？**
-A：需要把待识别的 wav 文件放到 `gs_api/data/sample_stt.wav`；否则自动 skip，避免误报。
+**Q2-1：如何定位「首包延迟」和「断网重试」问题？**
+A：流式请求结束后读取 `ChatPage.last_stream_metrics`（或客户端 `last_stream_metrics`）：`ttft_ms` 为首包延迟、`attempts` 为实际请求次数（>1 表示发生过重试）、`total_ms` 为整条流耗时。重试次数/间隔/阈值分别在 `api.stream_retries`、`api.stream_retry_delay`、`api.ttft_threshold_ms` 调整；Allure 报告中会挂载 `首包延迟TTFT` 与 `流式请求指标` 附件。
+
+**Q3：Web UI 用例（test_06_web_ui_smoke.py）为什么不报错却显示跳过？**
+A：该类用例在页面不可达或元素选择器未匹配时会主动 `pytest.skip` 而非 fail，避免无浏览器/无前端环境时产生误报；选择器为占位实现，需按实际前端 DOM 调整。
 
 **Q4：如何调整 Ragas 的通过阈值？**
 A：编辑 `gs_api/config/config.yaml` 中 `ragas.threshold.*` 字段，或者直接用环境变量对应配置。
@@ -414,7 +518,7 @@ A：请确保系统安装 `allure 2.20+`，并使用 PowerShell 7+ 或新版终�
 
 ---
 
-## 十一、扩展指南
+## 十、扩展指南
 
 ### 新增接口测试
 
@@ -436,29 +540,74 @@ evaluator = GaoShengRagasEvaluator(metric_names=["faithfulness", "my_custom_scor
 
 ---
 
-## 十二、交付物总览
+## 十一、Jenkins 持续集成（CI 流水线）
 
-本 README 所说明的**完整框架文件清单**：
+仓库根目录提供声明式流水线 [Jenkinsfile](Jenkinsfile)，实现「提交即测」的工程化闭环。
 
+### 11.1 流水线阶段
+
+| 阶段 | 执行内容 |
+|---|---|
+| `Checkout` | 拉取当前分支代码，记录提交短哈希 |
+| `环境准备` | 创建虚拟环境并 `pip install -r requirements.txt`，校验核心依赖可用 |
+| `Run API Tests` | `pytest -m "smoke and not ui" -n auto` 并发执行接口冒烟（含 Ragas 质量评估） |
+| `Run UI Tests` | `pytest -m ui --headless` 无头执行 Web UI 用例（串行，保证浏览器稳定） |
+| `Generate Allure Report` | `allure generate` 生成 HTML 报告，并在 `post` 阶段由 Allure 插件发布 |
+| `post` | 归档 UI 失败截图与 HTML 报告，清理无头 Chrome 临时文件 |
+
+> 说明：`Run API Tests` / `Run UI Tests` 均显式传 `-o addopts=""` 关闭 `pytest.ini` 默认的
+> `--clean-alluredir`，改由流水线在 API 阶段统一清理，避免清掉后续 UI 阶段的 Allure 结果。
+
+### 11.2 Jenkins 侧准备（重要）
+
+**① 安装 Allure 插件**
+
+`系统管理 → 插件管理 → 可选插件` 搜索并安装 **Allure Jenkins Plugin**；
+安装后到 `系统管理 → 全局工具配置 → Allure Commandline` 新增一个安装项
+（勾选自动下载并指定版本，如 `2.27.0`）。未安装时 `post` 阶段的 `allure` 步骤会失败。
+
+**② 配置凭证（Credentials）**
+
+`系统管理 → 凭证管理 → 全局凭证` 新增以下 **Secret text** 类型凭证，ID 需与 `Jenkinsfile`
+中 `environment` 段完全一致（否则变量注入为空导致用例跳过）：
+
+| 凭证 ID | 用途 | 是否必须 |
+|---|---|---|
+| `gaosheng-ais-token` | 高升AI 登录 token（鉴权接口） | 部分接口需要 |
+| `gaosheng-deepseek-key` | Ragas 评估 LLM 的 DeepSeek Key | Ragas 用例必须 |
+| `gaosheng-embedding-key` | Ragas 评估 Embedding 的 Key（硅基流动） | 推荐 |
+
+**③ 节点环境**
+
+- Python 3.10+ 已加入 `PATH`；
+- 已安装 Google Chrome（UI 用例以 `--headless` 无头运行，无需图形界面）；
+- 若使用容器化 Agent，镜像需预装 Chrome 与中文字体，避免截图中文乱码。
+
+**④ 创建流水线任务**
+
+新建 `Pipeline` 类型任务 → `Pipeline script from SCM` → 选择 Git → 填写仓库地址与凭证
+（`Credentials` 下拉选择已配置的 Git 账号，支持用户名密码或 SSH Key）→
+`Script Path` 保持 `Jenkinsfile` → 保存并构建。
+
+### 11.3 本地等价命令
+
+流水线各阶段在本地可直接用等价命令复现：
+
+```bash
+# 环境准备
+python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+
+# API 冒烟（并发）
+pytest gs_api/script -m "smoke and not ui" -n auto -o addopts="" \
+       --alluredir=gs_api/report/output/allure_results
+
+# UI 无头
+pytest gs_api/script -m ui --headless -o addopts="" \
+       --alluredir=gs_api/report/output/allure_results
+
+# 生成并打开报告
+allure generate gs_api/report/output/allure_results \
+       -o gs_api/report/output/allure_html --clean
+allure open gs_api/report/output/allure_html
 ```
-总文件数：37+
-  gs_api/                   27+ 核心文件
-    base/                   7   → 6 个功能模块 + __init__
-    page/                   7   → 6 个模块 Page + __init__
-    report/                 3   → Allure + RagasEvaluator + __init__
-    script/                 9   → conftest + 7 套 test_*.py + __init__
-    config/                 1   → config.yaml
-    data/                   2   → test_data.yaml + qa_data.csv
-  根目录辅助文件             5+
-    pytest.ini              配置 markers / addopts
-    requirements.txt        新增 allure/selenium/pyyaml/pandas
-    run_gs_api_tests.ps1    Windows 一键运行
-    run_gs_api_tests.sh     macOS/Linux 一键运行
-    README.md               本文档
-```
 
-所有 Python 源文件均已通过 `python -m py_compile` 语法校验。
-
----
-
-**© 高升AI 接口自动化测试框架 v1.0.0 · 基于 RAGAS + Allure + Selenium 四层架构**

@@ -13,7 +13,16 @@ from typing import Generator, Optional
 
 import allure
 
-from ..base import HttpClient, http_client, ApiResponse, StreamEvent, get_logger, assertions
+from ..base import (
+    HttpClient,
+    http_client,
+    ApiResponse,
+    StreamEvent,
+    StreamMetrics,
+    flexible_text,
+    get_logger,
+    assertions,
+)
 
 log = get_logger(__name__)
 
@@ -28,6 +37,11 @@ class ChatPage:
 
     def __init__(self, client: Optional[HttpClient] = None):
         self.client = client or http_client
+
+    @property
+    def last_stream_metrics(self) -> Optional[StreamMetrics]:
+        """最近一次流式请求的指标（TTFT / 重试次数 / 总耗时），供用例断言。"""
+        return self.client.last_stream_metrics
 
     # ------------------------------------------------------------------
     # 3. 流式聊天
@@ -110,9 +124,11 @@ class ChatPage:
         question: str,
         token: Optional[str] = None,
     ) -> str:
+        """文本聊天并提取回答，经宽容解析保证返回纯字符串。"""
         resp = self.chat_text(question, token=token)
         assertions.assert_api_success(resp, "文本聊天")
-        answer = resp.data
+        # 兜底解析：answer 若被后端/大模型返回成嵌套对象，则拍平成字符串
+        answer = flexible_text(resp.data)
         assertions.assert_not_empty(answer, "回答文本")
         return answer
 

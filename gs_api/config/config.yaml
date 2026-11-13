@@ -9,6 +9,12 @@ api:
   timeout: 30
   retries: 3
   retry_delay: 1
+  # 流式接口：首包前(Timeout/断网)重试次数
+  stream_retries: 2
+  # 流式重试间隔基数(秒)，实际等待 = 基数 * 当前第n次
+  stream_retry_delay: 0.5
+  # 首包延迟(TTFT)阈值(ms)，用于流式用例断言
+  ttft_threshold_ms: 3000
 
 auth:
   # 登录鉴权 token；若设置环境变量 AIS_TOKEN 则优先使用 env

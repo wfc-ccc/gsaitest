@@ -23,7 +23,7 @@ from gs_api.base import assertions, get_logger
 from gs_api.page import HistoryPage, SessionPage, ChatPage
 
 log = get_logger(__name__)
-pytestmark = [pytest.mark.history, pytest.mark.smoke]
+pytestmark = [pytest.mark.api, pytest.mark.history, pytest.mark.smoke]
 
 
 @allure.epic("高升AI接口自动化测试")

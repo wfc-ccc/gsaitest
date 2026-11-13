@@ -4,7 +4,7 @@ gs_api/script 层共享 conftest。
 提供 pytest fixtures：
 - Page 对象（Session / Chat / History / Embedding / Web）
 - 共享会话 sessionId（用于多接口串联用例）
-- Ragas 评估器（复用原有 tests/conftest 中的 evaluator_llm / evaluator_embeddings）
+- Ragas 评估器（DeepSeek LLM + 硅基流动 Embeddings）
 - Allure 生命周期钩子（结果目录初始化、环境信息写入）
 - 测试数据 fixtures（YAML / CSV 加载）
 """
@@ -60,11 +60,38 @@ requires_ais_token = pytest.mark.skipif(
 # ============================================================
 
 
+def pytest_addoption(parser):
+    """注册自定义命令行参数。
+
+    ``--headless``：强制 Web UI 用例以无头模式运行（CI 环境使用），
+    覆盖 ``selenium.headless`` 配置；本地调试可用 ``--no-headless`` 观察浏览器。
+    """
+    parser.addoption(
+        "--headless",
+        action="store_true",
+        default=False,
+        help="强制 Selenium 以无头(headless)模式运行（CI 默认）",
+    )
+    parser.addoption(
+        "--no-headless",
+        action="store_true",
+        default=False,
+        help="强制 Selenium 显示浏览器窗口（本地调试）",
+    )
+
+
 def pytest_configure(config_pytest):
     """pytest 启动时初始化 Allure 目录。"""
     # 仅在非 collector 阶段执行
     if config_pytest.option.markexpr and "collect" in config_pytest.option.markexpr:
         return
+
+    # 应用 Web UI 无头模式开关
+    if config_pytest.getoption("--headless", None):
+        config.set("selenium.headless", True)
+    elif config_pytest.getoption("--no-headless", None):
+        config.set("selenium.headless", False)
+
     try:
         AllureManager.clean_results()
         AllureManager.write_environment()
@@ -72,6 +99,7 @@ def pytest_configure(config_pytest):
         log.info("Allure 报告环境初始化完成")
     except Exception as e:
         log.warning("Allure 环境初始化失败: %s", e)
+
 
     config_pytest.addinivalue_line(
         "markers", "session: 会话接口"
@@ -165,7 +193,7 @@ def shared_session_id(session_page: SessionPage) -> str:
 
 @pytest.fixture(scope="session")
 def evaluator_llm():
-    """复用原有 conftest 的方式：构造 Ragas 评估 LLM。"""
+    """构造 Ragas 评估 LLM。"""
     try:
         from src.llm import create_deepseek_llm
         from ragas.llms import LangchainLLMWrapper
@@ -177,7 +205,7 @@ def evaluator_llm():
 
 @pytest.fixture(scope="session")
 def evaluator_embeddings():
-    """复用原有 conftest 的方式：构造 Ragas 评估 Embedding。"""
+    """构造 Ragas 评估 Embedding。"""
     try:
         from src.embeddings import create_remote_embeddings
         from ragas.embeddings.base import LangchainEmbeddingsWrapper
@@ -211,6 +239,15 @@ def gs_test_data():
 def gs_qa_pairs():
     """加载高升AI Q&A 对 CSV（用于 ragas 评估）。"""
     return load_qa_pairs("qa_data.csv")
+
+
+@pytest.fixture(scope="session")
+def sample_docs_dir() -> Path:
+    """预制知识库文档目录（课程目录 / FAQ / 远程办公政策等）。
+
+    供长文档切片、向量化检索与 Ragas 评估复用。
+    """
+    return PROJECT_ROOT / "data" / "sample_docs"
 
 
 @pytest.fixture

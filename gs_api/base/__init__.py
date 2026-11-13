@@ -10,26 +10,33 @@ base 层：公共基础封装。
 - data_loader: YAML / CSV 测试数据加载器
 """
 
-from .config import config, Config
-from .http_client import HttpClient, http_client, ApiResponse, StreamEvent
-from .selenium_base import SeleniumBase
-from .logger import get_logger, attach_log_to_allure
+from .config import config, Config, BASE_DIR, CONFIG_DIR, DATA_DIR, REPORT_DIR
+from .http_client import HttpClient, http_client, ApiResponse, StreamEvent, StreamMetrics
+from .selenium_base import SeleniumBase, AnswerRenderComplete
+from .logger import get_logger
 from .assertions import assertions, Assertions
 from .data_loader import load_yaml, load_csv, load_qa_pairs
+from .deserializer import flexible_text
 
 __all__ = [
     "config",
     "Config",
+    "BASE_DIR",
+    "CONFIG_DIR",
+    "DATA_DIR",
+    "REPORT_DIR",
     "HttpClient",
     "http_client",
     "ApiResponse",
     "StreamEvent",
+    "StreamMetrics",
     "SeleniumBase",
+    "AnswerRenderComplete",
     "get_logger",
-    "attach_log_to_allure",
     "assertions",
     "Assertions",
     "load_yaml",
     "load_csv",
     "load_qa_pairs",
+    "flexible_text",
 ]

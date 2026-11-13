@@ -22,7 +22,7 @@ from gs_api.base import assertions, get_logger
 from gs_api.page import EmbeddingPage
 
 log = get_logger(__name__)
-pytestmark = [pytest.mark.embedding]
+pytestmark = [pytest.mark.api, pytest.mark.embedding]
 
 
 @allure.epic("高升AI接口自动化测试")

@@ -14,7 +14,7 @@ from typing import Optional
 
 import allure
 
-from ..base import SeleniumBase, get_logger, config
+from ..base import SeleniumBase, AnswerRenderComplete, get_logger, config
 
 log = get_logger(__name__)
 
@@ -42,23 +42,37 @@ class GaoShengWebPage(SeleniumBase):
     NEW_SESSION_BTN = ("css", "[data-testid='new-session-btn']")
     QUESTION_INPUT = ("css", "[data-testid='question-input']")
     SEND_BTN = ("css", "[data-testid='send-btn']")
+    STOP_BTN = ("css", "[data-testid='stop-generate-btn']")
+    COPY_BTN = ("css", "[data-testid='copy-btn']")
     ANSWER_LAST = ("css", "[data-testid='message-item']:last-child .answer-content")
     HISTORY_ITEMS = ("css", "[data-testid='history-item']")
 
     @allure.step("UI: 点击新建会话")
     def ui_new_session(self) -> None:
         if self.is_element_present(*self.NEW_SESSION_BTN):
+            # click() 内部已使用 WebDriverWait(element_to_be_clickable)，无需固定 sleep
             self.click(*self.NEW_SESSION_BTN)
-            self.sleep(0.5)
 
-    @allure.step("UI: 发送问题 question={question}")
-    def ui_send_question(self, question: str, wait_sec: float = 3.0) -> str:
+    @allure.step("UI: 发送问题并等待流式气泡渲染完成 question={question}")
+    def ui_send_question(self, question: str, timeout: int = 60) -> str:
+        """发送问题，等待气泡渲染结束后返回最终全文。
+
+        判定「渲染结束」：等待「停止生成」按钮消失，或「复制」按钮出现
+        （见 ``AnswerRenderComplete``），再提取气泡最终文本。
+        """
         self.type(*self.QUESTION_INPUT, question)
         self.click(*self.SEND_BTN)
-        self.sleep(wait_sec)
-        if self.is_element_present(*self.ANSWER_LAST):
-            return self.get_text(*self.ANSWER_LAST)
-        return ""
+        return self.wait_answer_complete(timeout=timeout)
+
+    @allure.step("UI: 等待聊天气泡渲染完成")
+    def wait_answer_complete(self, timeout: int = 60) -> str:
+        """等待流式气泡渲染完成（停止生成消失 / 复制出现），返回最终文本。"""
+        condition = AnswerRenderComplete(
+            self._locator(*self.ANSWER_LAST),
+            self._locator(*self.STOP_BTN),
+            self._locator(*self.COPY_BTN),
+        )
+        return self.wait_until(condition, timeout=timeout, poll=0.5)
 
     @allure.step("UI: 获取历史会话数量")
     def ui_get_history_count(self) -> int:

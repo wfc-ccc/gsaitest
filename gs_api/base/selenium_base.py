@@ -8,7 +8,7 @@ Selenium 公共方法封装。
 import os
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import allure
 from selenium import webdriver
@@ -24,6 +24,31 @@ from .config import config, REPORT_DIR
 
 SCREENSHOT_DIR = REPORT_DIR / "screenshots"
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class AnswerRenderComplete:
+    """自定义 expected_conditions：等待流式聊天气泡渲染完成。
+
+    判定条件（满足其一即视为渲染结束）：
+    - 「停止生成」按钮消失；或
+    - 「复制」按钮出现。
+
+    同时要求回答文本非空，避免在气泡开始渲染前就提前命中。
+    """
+
+    def __init__(self, answer_locator, stop_locator, copy_locator):
+        self._answer = answer_locator
+        self._stop = stop_locator
+        self._copy = copy_locator
+
+    def __call__(self, driver):
+        answers = driver.find_elements(*self._answer)
+        text = (answers[-1].text or "").strip() if answers else ""
+        if not text:
+            return False
+        stop_alive = bool(driver.find_elements(*self._stop))
+        copy_ready = bool(driver.find_elements(*self._copy))
+        return text if (copy_ready or not stop_alive) else False
 
 
 class SeleniumBase:
@@ -130,6 +155,11 @@ class SeleniumBase:
         wait = WebDriverWait(self.driver, timeout or 10)
         return wait.until(EC.presence_of_element_located(self._locator(by, value)))
 
+    def wait_until(self, condition, timeout: Optional[int] = None, poll: float = 0.5) -> Any:
+        """显式等待自定义 expected_conditions 返回真值（替代固定 sleep）。"""
+        wait = WebDriverWait(self.driver, timeout or 10, poll_frequency=poll)
+        return wait.until(condition)
+
     def is_element_present(self, by: str, value: str) -> bool:
         try:
             self.find_element(by, value)
@@ -170,7 +200,7 @@ class SeleniumBase:
         Select(el).select_by_value(val)
 
     # ------------------------------------------------------------------
-    # 截图与等待
+    # 截图
     # ------------------------------------------------------------------
 
     def screenshot(self, name: Optional[str] = None) -> str:
@@ -183,9 +213,6 @@ class SeleniumBase:
             attachment_type=allure.attachment_type.PNG,
         )
         return str(fpath)
-
-    def sleep(self, seconds: float) -> None:
-        time.sleep(seconds)
 
     # ------------------------------------------------------------------
     # 窗口 / iframe
