@@ -90,8 +90,6 @@ gstest/
 
 ## 三、接口覆盖清单
 
-对照 **aitj v1.0.0 接口文档**，当前 gs_api 脚本层已覆盖 15 个接口：
-
 | 编号 | 模块 | 方法 · 路径 | 测试脚本 |
 |---|---|---|---|
 | 1  | 会话 | `POST /ais/session` 新建会话 | [test_01_session.py](gs_api/script/test_01_session.py) |
